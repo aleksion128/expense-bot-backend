@@ -65,7 +65,7 @@ func GetExpensesByUser(db *sql.DB, user_id int, description string) ([]models.Ex
 		expense.Description = descriptionDecr
 		expensesArr = append(expensesArr, expense)
 	}
-	return expensesArr, nil
+	return FindExpensesByDescription(expensesArr, description)
 }
 
 func FindExpensesByDescription(expenses []models.Expense, description string) ([]models.Expense, error) {
@@ -74,5 +74,6 @@ func FindExpensesByDescription(expenses []models.Expense, description string) ([
 		if strings.Contains(expense.Description, description) {
 			filteredExpenses = append(filteredExpenses, expense)
 		}
-
+	}
+	return filteredExpenses, nil
 }
