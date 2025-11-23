@@ -39,7 +39,7 @@ func Decrypt(text string) (string, error) {
 	return string(ciphertext), nil
 }
 
-func GetExpensesByUser(db *sql.DB, user_id int, description string) ([]models.Expense, error) {
+func GetExpensesByUserAndDescription(db *sql.DB, user_id int, description string) ([]models.Expense, error) {
 	if err := db.Ping(); err != nil {
 		return nil, err
 	}
@@ -76,4 +76,26 @@ func FindExpensesByDescription(expenses []models.Expense, description string) ([
 		}
 	}
 	return filteredExpenses, nil
+}
+
+func UpdateExpenseByUser(db *sql.DB, expense models.Expense) error {
+	rows, err := db.Query(`UPDATE expenses SET (amount, description) VALUES ($1,$2) WHERE user_id=$3`, expense.Amount, expense.Description, expense.UserID)
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+	return nil
+}
+
+func AddExpense(db *sql.DB, expense models.Expense) error {
+	description, err := Encrypt(expense.Description)
+	if err != nil {
+		return err
+	}
+	rows, err := db.Query(`INSERT INTO expenses (user_id, amount, description,created_at) VALUES ($1,$2,$3,$4)`, expense.UserID, expense.Amount, description, expense.Date)
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+	return nil
 }
