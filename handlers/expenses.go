@@ -11,14 +11,10 @@ import (
 )
 
 func GetExpenses(c *gin.Context) {
-	user_id, err := strconv.Atoi(c.Param("user_id"))
+	telegram_id := c.Param("telegram_id")
 	description := c.Param("description")
-	if err != nil {
-		c.JSON(400, gin.H{"error": "Invalid user id"})
-		return
-	}
 
-	expenses, err := storage.GetExpensesByUserAndDescription(database.ConnectDB(), user_id, description)
+	expenses, err := storage.GetExpensesByUserAndDescription(database.ConnectDB(), telegram_id, description)
 	if err != nil {
 		c.JSON(500, gin.H{"error": "Error getting expenses"})
 		return
@@ -38,4 +34,28 @@ func AddExpense(c *gin.Context) {
 		return
 	}
 	c.JSON(http.StatusOK, gin.H{"message": "Expense added successfully"})
+}
+
+func DeleteExpense(c *gin.Context) {
+	telegram_id := c.Param("telegram_id")
+	expense_id, err := strconv.Atoi(c.Param("expense_id"))
+	if err != nil {
+		c.JSON(400, gin.H{"error": "Invalid expense id"})
+		return
+	}
+	if err := storage.DeleteExpense(database.ConnectDB(), telegram_id, expense_id); err != nil {
+		c.JSON(500, gin.H{"error": "Error deleting expense"})
+		return
+	}
+	c.JSON(200, gin.H{"message": "Expense deleted successfully"})
+}
+
+func GetLastFiveExpenses(c *gin.Context) {
+	telegram_id := c.Param("telegram_id")
+	expenses, err := storage.GetLastFiveExpenses(database.ConnectDB(), telegram_id)
+	if err != nil {
+		c.JSON(500, gin.H{"error": "Error getting expenses"})
+		return
+	}
+	c.JSON(200, expenses)
 }

@@ -3,20 +3,28 @@ package main
 import (
 	"bot_api_microservice/database"
 	"bot_api_microservice/handlers"
+	"log"
 
 	"github.com/gin-gonic/gin"
 )
 
 func main() {
 	// Connecton to database
-	db := database.ConnectDB()
-	defer db.Close()
+	DB := database.ConnectDB()
+	if DB == nil {
+		log.Fatal("Database connection is nil")
+	}
+	defer DB.Close()
 
 	// Initialize gin
 	r := gin.Default()
 
-	r.GET("/expenses/find_by_descr/:user_id/:description", handlers.GetExpenses)
-	r.POST("/expenses/add/:user_id", handlers.AddExpense)
+	apiExpenses := r.Group("api/v1/expenses")
+	{
+		apiExpenses.POST("/add/:telegram_id", handlers.AddExpense)
+		apiExpenses.GET("/find_by_descr/:telegram_id/:description", handlers.GetExpenses)
+		apiExpenses.GET("/today/:telegram_id", handlers.GetLastFiveExpenses)
+	}
 
 	r.Run(":8443")
 }

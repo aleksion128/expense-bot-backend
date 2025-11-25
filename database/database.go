@@ -9,14 +9,17 @@ import (
 	_ "github.com/lib/pq"
 )
 
-var DB *sql.DB
-
 func ConnectDB() *sql.DB {
-	connstr := fmt.Sprintf("user=%s dbname=%s password=%s sslmode=disable", os.Getenv("POSTGRES_USER"), os.Getenv("POSTGRES_DB"), os.Getenv("POSTGRES_PASSWORD"))
+	connstr := fmt.Sprintf(
+		"host=%s port=%s user=%s dbname=%s password=%s sslmode=disable",
+		os.Getenv("POSTGRES_HOST"), os.Getenv("POSTGRES_PORT"),
+		os.Getenv("POSTGRES_USER"), os.Getenv("POSTGRES_DB"),
+		os.Getenv("POSTGRES_PASSWORD"),
+	)
 	db, err := sql.Open("postgres", connstr)
 	if err != nil {
 		log.Fatal(err)
 	}
-	DB = db
+	fmt.Println("Database connected succesfully")
 	return db
 }

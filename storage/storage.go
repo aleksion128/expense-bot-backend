@@ -1,11 +1,13 @@
 package storage
 
 import (
+	"bot_api_microservice/database"
 	"bot_api_microservice/models"
 	"crypto/aes"
 	"database/sql"
 	"os"
 	"strings"
+	"time"
 )
 
 // Encryption and decryption descriptions
@@ -39,11 +41,18 @@ func Decrypt(text string) (string, error) {
 	return string(ciphertext), nil
 }
 
-func GetExpensesByUserAndDescription(db *sql.DB, user_id int, description string) ([]models.Expense, error) {
+// EXPENSES
+
+// Find expenses by keyword
+func GetExpensesByUserAndDescription(db *sql.DB, telegram_id string, description string) ([]models.Expense, error) {
 	if err := db.Ping(); err != nil {
 		return nil, err
 	}
-	rows, err := db.Query(`SELECT amount, description FROM expenses WHERE user_id=$1`, user_id)
+	user_id, err := GetUserIDByTelegramID(database.ConnectDB(), telegram_id)
+	if err != nil {
+		return nil, err
+	}
+	rows, err := db.Query(`SELECT amount, description,category FROM expenses WHERE user_id=$1`, user_id)
 	if err != nil {
 		return nil, err
 	}
@@ -52,7 +61,8 @@ func GetExpensesByUserAndDescription(db *sql.DB, user_id int, description string
 	for rows.Next() {
 		var amount int64
 		var description string
-		err = rows.Scan(&amount, &description)
+		var category string
+		err = rows.Scan(&amount, &description, &category)
 		if err != nil {
 			return nil, err
 		}
@@ -63,6 +73,7 @@ func GetExpensesByUserAndDescription(db *sql.DB, user_id int, description string
 		var expense models.Expense
 		expense.Amount = amount
 		expense.Description = descriptionDecr
+		expense.Category = category
 		expensesArr = append(expensesArr, expense)
 	}
 	return FindExpensesByDescription(expensesArr, description)
@@ -76,6 +87,39 @@ func FindExpensesByDescription(expenses []models.Expense, description string) ([
 		}
 	}
 	return filteredExpenses, nil
+}
+
+// Get five last expenses for current day
+func GetLastFiveExpenses(db *sql.DB, telegram_id string) ([]models.Expense, error) {
+	user_id, err := GetUserIDByTelegramID(database.ConnectDB(), telegram_id)
+	if err != nil {
+		return nil, err
+	}
+	rows, err := db.Query(`SELECT amount, description,category FROM expenses WHERE user_id=$1 AND created_at=$2 ORDER BY created_at DESC LIMIT 5`, user_id, time.Now())
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var expensesArr []models.Expense
+	for rows.Next() {
+		var amount int64
+		var description string
+		var category string
+		err = rows.Scan(&amount, &description, &category)
+		if err != nil {
+			return nil, err
+		}
+		descriptionDecr, err := Decrypt(description)
+		if err != nil {
+			return nil, err
+		}
+		var expense models.Expense
+		expense.Amount = amount
+		expense.Description = descriptionDecr
+		expense.Category = category
+		expensesArr = append(expensesArr, expense)
+	}
+	return expensesArr, nil
 }
 
 func UpdateExpenseByUser(db *sql.DB, expense models.Expense) error {
@@ -98,4 +142,29 @@ func AddExpense(db *sql.DB, expense models.Expense) error {
 	}
 	defer rows.Close()
 	return nil
+}
+
+func DeleteExpense(db *sql.DB, telegram_id string, expense_id int) error {
+	user_id, err := GetUserIDByTelegramID(database.ConnectDB(), telegram_id)
+	if err != nil {
+		return err
+	}
+	rows, err := db.Query(`DELETE FROM expenses WHERE user_id=$1 AND id=$2`, user_id, expense_id)
+	if err != nil {
+		return err
+	}
+	defer rows.Close()
+	return nil
+}
+
+// USERS
+
+func GetUserIDByTelegramID(db *sql.DB, telegram_id string) (int, error) {
+	row := db.QueryRow(`SELECT id FROM users WHERE telegram_id=$1`, telegram_id)
+	var user_id int
+	err := row.Scan(&user_id)
+	if err != nil {
+		return -1, err
+	}
+	return user_id, nil
 }
