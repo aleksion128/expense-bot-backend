@@ -17,3 +17,21 @@ type User struct {
 	Username   string    `json:"username"`
 	CreatedAt  time.Time `json:"created_at"`
 }
+
+type Income struct {
+	ID          int    `json:"id"`
+	UserID      int    `json:"user_id"`
+	Amount      int64  `json:"amount"`
+	Description string `json:"description"`
+	Month       int    `json:"month"`
+	Year        int    `json:"year"`
+}
+
+type Goal struct {
+	ID          int    `json:"id"`
+	UserID      int    `json:"user_id"`
+	Amount      int64  `json:"amount"`
+	Description string `json:"description"`
+	Month       int    `json:"month"`
+	Year        int    `json:"year"`
+}

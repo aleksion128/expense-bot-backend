@@ -1,10 +1,13 @@
 package storage
 
 import (
-	"bot_api_microservice/database"
 	"bot_api_microservice/models"
 	"crypto/aes"
+	"crypto/cipher"
+	"crypto/rand"
 	"database/sql"
+	"encoding/hex"
+	"errors"
 	"os"
 	"strings"
 	"time"
@@ -12,33 +15,56 @@ import (
 
 // Encryption and decryption descriptions
 func Encrypt(text string) (string, error) {
-	key := []byte(os.Getenv("KEY"))
+	keyHex := os.Getenv("KEY")
+	key, err := hex.DecodeString(keyHex)
+	if err != nil {
+		return "", err
+	}
 	block, err := aes.NewCipher(key)
 	if err != nil {
 		return "", err
 	}
-
-	plaintext := []byte(text)
-	ciphertext := make([]byte, len(plaintext))
-
-	block.Encrypt(ciphertext, plaintext)
-
-	return string(ciphertext), nil
+	aesgcm, err := cipher.NewGCM(block)
+	if err != nil {
+		return "", err
+	}
+	nonce := make([]byte, aesgcm.NonceSize())
+	if _, err := rand.Read(nonce); err != nil {
+		return "", err
+	}
+	ciphertext := aesgcm.Seal(nil, nonce, []byte(text), nil)
+	combined := append(nonce, ciphertext...)
+	return hex.EncodeToString(combined), nil
 }
 
 func Decrypt(text string) (string, error) {
-	key := []byte(os.Getenv("KEY"))
+	keyHex := os.Getenv("KEY")
+	key, err := hex.DecodeString(keyHex)
+	if err != nil {
+		return "", err
+	}
 	block, err := aes.NewCipher(key)
 	if err != nil {
 		return "", err
 	}
-
-	plaintext := []byte(text)
-	ciphertext := make([]byte, len(plaintext))
-
-	block.Decrypt(ciphertext, plaintext)
-
-	return string(ciphertext), nil
+	aesgcm, err := cipher.NewGCM(block)
+	if err != nil {
+		return "", err
+	}
+	combined, err := hex.DecodeString(text)
+	if err != nil {
+		return "", err
+	}
+	if len(combined) < aesgcm.NonceSize() {
+		return "", errors.New("ciphertext too short")
+	}
+	nonce := combined[:aesgcm.NonceSize()]
+	ciphertext := combined[aesgcm.NonceSize():]
+	plaintext, err := aesgcm.Open(nil, nonce, ciphertext, nil)
+	if err != nil {
+		return "", err
+	}
+	return string(plaintext), nil
 }
 
 // EXPENSES
@@ -48,7 +74,7 @@ func GetExpensesByUserAndDescription(db *sql.DB, telegram_id string, description
 	if err := db.Ping(); err != nil {
 		return nil, err
 	}
-	user_id, err := GetUserIDByTelegramID(database.ConnectDB(), telegram_id)
+	user_id, err := GetUserIDByTelegramID(db, telegram_id)
 	if err != nil {
 		return nil, err
 	}
@@ -91,11 +117,16 @@ func FindExpensesByDescription(expenses []models.Expense, description string) ([
 
 // Get five last expenses for current day
 func GetLastFiveExpenses(db *sql.DB, telegram_id string) ([]models.Expense, error) {
-	user_id, err := GetUserIDByTelegramID(database.ConnectDB(), telegram_id)
+	user_id, err := GetUserIDByTelegramID(db, telegram_id)
 	if err != nil {
 		return nil, err
 	}
-	rows, err := db.Query(`SELECT amount, description,category FROM expenses WHERE user_id=$1 AND created_at=$2 ORDER BY created_at DESC LIMIT 5`, user_id, time.Now())
+	rows, err := db.Query(`SELECT amount, description,category FROM expenses WHERE user_id=$1 AND
+	 created_at>=$2 AND created_at<=$3 ORDER BY created_at DESC LIMIT 5`,
+		user_id,
+		time.Now().AddDate(0, 0, -1),
+		time.Now(),
+	)
 	if err != nil {
 		return nil, err
 	}
@@ -122,30 +153,44 @@ func GetLastFiveExpenses(db *sql.DB, telegram_id string) ([]models.Expense, erro
 	return expensesArr, nil
 }
 
-func UpdateExpenseByUser(db *sql.DB, expense models.Expense) error {
-	rows, err := db.Query(`UPDATE expenses SET (amount, description) VALUES ($1,$2) WHERE user_id=$3`, expense.Amount, expense.Description, expense.UserID)
-	if err != nil {
-		return err
-	}
-	defer rows.Close()
-	return nil
-}
-
-func AddExpense(db *sql.DB, expense models.Expense) error {
+func UpdateExpenseByUser(db *sql.DB, expense models.Expense) (int, error) {
 	description, err := Encrypt(expense.Description)
 	if err != nil {
-		return err
+		return -1, err
 	}
-	rows, err := db.Query(`INSERT INTO expenses (user_id, amount, description,created_at) VALUES ($1,$2,$3,$4)`, expense.UserID, expense.Amount, description, expense.Date)
+	rows, err := db.Query(`UPDATE expenses SET amount=$1, description=$2, category=$3 WHERE user_id=$4 AND created_at=$5 RETURNING id`,
+		expense.Amount,
+		description,
+		expense.Category,
+		expense.UserID,
+		expense.Date,
+	)
 	if err != nil {
-		return err
+		return -1, err
 	}
+	var id int
+	rows.Scan(&id)
 	defer rows.Close()
-	return nil
+	return id, nil
+}
+
+func AddExpense(db *sql.DB, expense models.Expense) (int, error) {
+	description, err := Encrypt(expense.Description)
+	if err != nil {
+		return -1, err
+	}
+	rows, err := db.Query(`INSERT INTO expenses (user_id, amount, description,created_at) VALUES ($1,$2,$3,$4) RETURNING id`, expense.UserID, expense.Amount, description, expense.Date)
+	if err != nil {
+		return -1, err
+	}
+	var id int
+	rows.Scan(&id)
+	defer rows.Close()
+	return id, nil
 }
 
 func DeleteExpense(db *sql.DB, telegram_id string, expense_id int) error {
-	user_id, err := GetUserIDByTelegramID(database.ConnectDB(), telegram_id)
+	user_id, err := GetUserIDByTelegramID(db, telegram_id)
 	if err != nil {
 		return err
 	}
@@ -157,14 +202,3 @@ func DeleteExpense(db *sql.DB, telegram_id string, expense_id int) error {
 	return nil
 }
 
-// USERS
-
-func GetUserIDByTelegramID(db *sql.DB, telegram_id string) (int, error) {
-	row := db.QueryRow(`SELECT id FROM users WHERE telegram_id=$1`, telegram_id)
-	var user_id int
-	err := row.Scan(&user_id)
-	if err != nil {
-		return -1, err
-	}
-	return user_id, nil
-}
