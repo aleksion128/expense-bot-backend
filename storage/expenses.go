@@ -158,19 +158,17 @@ func UpdateExpenseByUser(db *sql.DB, expense models.Expense) (int, error) {
 	if err != nil {
 		return -1, err
 	}
-	rows, err := db.Query(`UPDATE expenses SET amount=$1, description=$2, category=$3 WHERE user_id=$4 AND created_at=$5 RETURNING id`,
+	var id int
+	err = db.QueryRow(`UPDATE expenses SET amount=$1, description=$2, category=$3 WHERE user_id=$4 AND created_at=$5 RETURNING id`,
 		expense.Amount,
 		description,
 		expense.Category,
 		expense.UserID,
 		expense.Date,
-	)
+	).Scan(&id)
 	if err != nil {
 		return -1, err
 	}
-	var id int
-	rows.Scan(&id)
-	defer rows.Close()
 	return id, nil
 }
 
@@ -179,13 +177,11 @@ func AddExpense(db *sql.DB, expense models.Expense) (int, error) {
 	if err != nil {
 		return -1, err
 	}
-	rows, err := db.Query(`INSERT INTO expenses (user_id, amount, description,created_at) VALUES ($1,$2,$3,$4) RETURNING id`, expense.UserID, expense.Amount, description, expense.Date)
+	var id int
+	err = db.QueryRow(`INSERT INTO expenses (user_id, amount, description,created_at) VALUES ($1,$2,$3,$4) RETURNING id`, expense.UserID, expense.Amount, description, expense.Date).Scan(&id)
 	if err != nil {
 		return -1, err
 	}
-	var id int
-	rows.Scan(&id)
-	defer rows.Close()
 	return id, nil
 }
 
@@ -201,4 +197,3 @@ func DeleteExpense(db *sql.DB, telegram_id string, expense_id int) error {
 	defer rows.Close()
 	return nil
 }
-

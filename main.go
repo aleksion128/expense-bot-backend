@@ -26,7 +26,7 @@ func main() {
 		apiExpenses.POST("/add/:telegram_id", handlers.AddExpense)
 		apiExpenses.GET("/find_by_descr/:telegram_id/:description", handlers.GetExpenses)
 		apiExpenses.GET("/today/:telegram_id", handlers.GetLastFiveExpenses)
-		apiExpenses.POST("/update/:telegram_id", handlers.UpdateExpense)
+		apiExpenses.POST("/update/:telegram_id/:expense_id", handlers.UpdateExpense)
 		apiExpenses.POST("/delete/:telegram_id/:expense_id", handlers.DeleteExpense)
 	}
 	apiIncomes := r.Group("api/v1/incomes")

@@ -6,12 +6,12 @@ import (
 )
 
 // Add income for user
-func AddIncome(db *sql.DB, income models.Income) error {
+func AddIncome(db *sql.DB, income models.Income) int {
 	description, err := Encrypt(income.Description)
 	if err != nil {
-		return err
+		return -1
 	}
-	rows, err := db.Query(`INSERT INTO incomes (user_id, amount, description, month, year) VALUES ($1,$2,$3,$4,$5)`,
+	rows, err := db.Query(`INSERT INTO incomes (user_id, amount, description, month, year) VALUES ($1,$2,$3,$4,$5) RETURNING id`,
 		income.UserID,
 		income.Amount,
 		description,
@@ -19,10 +19,14 @@ func AddIncome(db *sql.DB, income models.Income) error {
 		income.Year,
 	)
 	if err != nil {
-		return err
+		return -1
+	}
+	var id int
+	if err := rows.Scan(&id); err != nil {
+		return -1
 	}
 	defer rows.Close()
-	return nil
+	return id
 }
 
 // Delete income for user

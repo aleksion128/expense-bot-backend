@@ -20,8 +20,8 @@ func AddIncome(c *gin.Context) {
 		c.JSON(http.StatusBadRequest, gin.H{"error": "Invalid JSON body"})
 		return
 	}
-	err := storage.AddIncome(sqlDB, income)
-	if err != nil {
+	id := storage.AddIncome(sqlDB, income)
+	if id == -1 {
 		c.JSON(http.StatusInternalServerError, gin.H{"error": "Failed to add income to database"})
 		return
 	}
