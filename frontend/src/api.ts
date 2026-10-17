@@ -97,7 +97,7 @@ export const api = {
     req<Account>('/accounts', { method: 'POST', body: JSON.stringify(body) }),
   updateAccount: (id: number, body: Partial<Account>) =>
     req<Account>(`/accounts/${id}`, { method: 'PUT', body: JSON.stringify(body) }),
-  transactions: () => req<Transaction[]>('/transactions?limit=50'),
+  transactions: (limit = 200) => req<Transaction[]>(`/transactions?limit=${limit}`),
   createTransaction: (body: Partial<Transaction>) =>
     req<Transaction>('/transactions', { method: 'POST', body: JSON.stringify(body) }),
   budget: () => req<BudgetItem[]>('/budget'),
@@ -122,10 +122,15 @@ export const api = {
   },
 }
 
-export function rub(kopecks: number): string {
+export function rub(kopecks: number, fractionDigits = 2): string {
   return new Intl.NumberFormat('ru-RU', {
     style: 'currency',
     currency: 'RUB',
-    maximumFractionDigits: 0,
+    minimumFractionDigits: fractionDigits,
+    maximumFractionDigits: fractionDigits,
   }).format(kopecks / 100)
+}
+
+export function rubShort(kopecks: number): string {
+  return rub(kopecks, Math.abs(kopecks) % 100 === 0 ? 0 : 2)
 }

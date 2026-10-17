@@ -1,7 +1,20 @@
-import { useCallback, useEffect, useMemo, useState, type FormEvent } from 'react'
+import { useCallback, useEffect, useMemo, useState, type FormEvent, type ReactNode } from 'react'
+import {
+  Area,
+  AreaChart,
+  CartesianGrid,
+  Cell,
+  Pie,
+  PieChart,
+  ResponsiveContainer,
+  Tooltip,
+  XAxis,
+  YAxis,
+} from 'recharts'
 import {
   api,
   rub,
+  rubShort,
   type Account,
   type Analytics,
   type BudgetItem,
@@ -14,6 +27,8 @@ import {
 import './App.css'
 
 type Tab = 'dashboard' | 'accounts' | 'import' | 'budget' | 'goals' | 'scenarios'
+
+const CATEGORY_COLORS = ['#7eb6ff', '#5b8cff', '#9f7aea', '#63e6be', '#74c0fc', '#a5b4fc', '#c4b5fd', '#94a3b8']
 
 const accountTypeLabel: Record<Account['type'], string> = {
   card: 'Карта',
@@ -28,10 +43,20 @@ const budgetKindLabel: Record<BudgetItem['kind'], string> = {
   large_purchase: 'Крупная покупка',
 }
 
+const nav: { id: Tab; label: string; icon: ReactNode }[] = [
+  { id: 'dashboard', label: 'Дашборд', icon: <IconGrid /> },
+  { id: 'accounts', label: 'Счета', icon: <IconCards /> },
+  { id: 'import', label: 'Импорт', icon: <IconUpload /> },
+  { id: 'budget', label: 'Бюджет', icon: <IconBills /> },
+  { id: 'goals', label: 'Цели', icon: <IconTarget /> },
+  { id: 'scenarios', label: 'Сценарии', icon: <IconSpark /> },
+]
+
 export default function App() {
   const [tab, setTab] = useState<Tab>('dashboard')
   const [error, setError] = useState<string | null>(null)
   const [loading, setLoading] = useState(true)
+  const [manualOpen, setManualOpen] = useState(false)
 
   const [analytics, setAnalytics] = useState<Analytics | null>(null)
   const [forecast, setForecast] = useState<Forecast | null>(null)
@@ -49,7 +74,7 @@ export default function App() {
         api.analytics(),
         api.forecast(),
         api.accounts(),
-        api.transactions(),
+        api.transactions(300),
         api.budget(),
         api.goals(),
         api.imports(),
@@ -77,171 +102,267 @@ export default function App() {
     return Object.entries(analytics.by_category_expense).sort((a, b) => b[1] - a[1])
   }, [analytics])
 
+  const weekly = useMemo(() => buildWeeklySeries(txs), [txs])
+  const upcoming = useMemo(() => buildUpcomingBills(budget), [budget])
+  const estimated = forecast?.points.find((p) => p.months_ahead === 1)?.balance ?? analytics?.total_balance ?? 0
+
   return (
-    <div className="app">
-      <header className="header">
-        <div>
-          <h1>Budgetly</h1>
-          <p className="muted">Личные финансы · импорт выписок · прогноз</p>
+    <div className="app-shell">
+      <aside className="sidebar">
+        <div className="brand">
+          <span className="brand-mark">B</span>
+          Budgetly
         </div>
-        <button className="btn ghost" onClick={() => void reload()} disabled={loading}>
-          Обновить
-        </button>
-      </header>
-
-      <nav className="tabs">
-        {(
-          [
-            ['dashboard', 'Дашборд'],
-            ['accounts', 'Счета'],
-            ['import', 'Импорт'],
-            ['budget', 'Бюджет'],
-            ['goals', 'Цели'],
-            ['scenarios', 'Сценарии'],
-          ] as const
-        ).map(([id, label]) => (
-          <button
-            key={id}
-            className={tab === id ? 'tab active' : 'tab'}
-            onClick={() => setTab(id)}
-          >
-            {label}
+        <nav className="nav">
+          {nav.map((item) => (
+            <button
+              key={item.id}
+              className={tab === item.id ? 'nav-item active' : 'nav-item'}
+              onClick={() => setTab(item.id)}
+            >
+              {item.icon}
+              {item.label}
+            </button>
+          ))}
+        </nav>
+        <div className="sidebar-footer">
+          <button className="nav-item" onClick={() => void reload()} disabled={loading}>
+            <IconRefresh />
+            Обновить
           </button>
-        ))}
-      </nav>
+        </div>
+      </aside>
 
-      {error && <div className="banner error">{error}</div>}
-      {loading && !analytics && <div className="banner">Загрузка…</div>}
+      <main className="main">
+        <header className="topbar">
+          <div className="greeting">
+            <div className="avatar">Д</div>
+            <div>
+              <h1>Привет! Отличный месяц для бюджета</h1>
+              <p>
+                {loading
+                  ? 'Обновляем данные…'
+                  : analytics
+                    ? `Капитал ${rubShort(analytics.total_balance)} · чистый поток ${rubShort(analytics.net_period)}`
+                    : 'Загрузите выписку, чтобы увидеть аналитику'}
+              </p>
+            </div>
+          </div>
+          <div className="top-actions">
+            <button className="btn" onClick={() => setManualOpen(true)}>
+              Добавить вручную +
+            </button>
+            <button className="icon-btn" title="Уведомления" type="button">
+              <IconBell />
+            </button>
+          </div>
+        </header>
 
-      {tab === 'dashboard' && analytics && (
-        <Dashboard
-          analytics={analytics}
-          forecast={forecast}
-          txs={txs}
-          expenseCategories={expenseCategories}
+        {error && <div className="banner error">{error}</div>}
+
+        {tab === 'dashboard' && analytics && (
+          <DashboardView
+            analytics={analytics}
+            estimated={estimated}
+            weekly={weekly}
+            expenseCategories={expenseCategories}
+            upcoming={upcoming}
+            onSeeAll={() => setTab('budget')}
+          />
+        )}
+        {tab === 'accounts' && <AccountsPanel accounts={accounts} onChanged={reload} />}
+        {tab === 'import' && <ImportPanel accounts={accounts} imports={imports} onChanged={reload} />}
+        {tab === 'budget' && <BudgetPanel items={budget} onChanged={reload} />}
+        {tab === 'goals' && <GoalsPanel goals={goals} onChanged={reload} />}
+        {tab === 'scenarios' && <ScenariosPanel />}
+      </main>
+
+      {manualOpen && (
+        <ManualModal
+          accounts={accounts}
+          onClose={() => setManualOpen(false)}
+          onSaved={async () => {
+            setManualOpen(false)
+            await reload()
+          }}
         />
       )}
-      {tab === 'accounts' && (
-        <AccountsPanel accounts={accounts} onChanged={reload} />
-      )}
-      {tab === 'import' && (
-        <ImportPanel accounts={accounts} imports={imports} onChanged={reload} />
-      )}
-      {tab === 'budget' && <BudgetPanel items={budget} onChanged={reload} />}
-      {tab === 'goals' && <GoalsPanel goals={goals} onChanged={reload} />}
-      {tab === 'scenarios' && <ScenariosPanel />}
     </div>
   )
 }
 
-function Dashboard({
+function DashboardView({
   analytics,
-  forecast,
-  txs,
+  estimated,
+  weekly,
   expenseCategories,
+  upcoming,
+  onSeeAll,
 }: {
   analytics: Analytics
-  forecast: Forecast | null
-  txs: Transaction[]
+  estimated: number
+  weekly: { day: string; amount: number }[]
   expenseCategories: [string, number][]
+  upcoming: { name: string; date: string; amount: number }[]
+  onSeeAll: () => void
+}) {
+  const donut = expenseCategories.slice(0, 6).map(([name, value], i) => ({
+    name,
+    value,
+    color: CATEGORY_COLORS[i % CATEGORY_COLORS.length],
+  }))
+
+  return (
+    <>
+      <section className="kpi-row">
+        <Kpi label="Доходы" value={rub(analytics.income_period)} tone="up" />
+        <Kpi label="Расходы" value={rub(analytics.expense_period)} tone="down" />
+        <Kpi label="Баланс" value={rub(analytics.total_balance)} tone="plus" />
+        <Kpi label="Прогноз на месяц" value={rub(estimated)} tone="plus" />
+      </section>
+
+      <section className="dash-grid">
+        <div className="card">
+          <h3>Обзор за неделю</h3>
+          <div className="chart-wrap">
+            <ResponsiveContainer width="100%" height="100%">
+              <AreaChart data={weekly} margin={{ top: 10, right: 8, left: 0, bottom: 0 }}>
+                <defs>
+                  <linearGradient id="spendFill" x1="0" y1="0" x2="0" y2="1">
+                    <stop offset="0%" stopColor="#7eb6ff" stopOpacity={0.35} />
+                    <stop offset="100%" stopColor="#7eb6ff" stopOpacity={0} />
+                  </linearGradient>
+                </defs>
+                <CartesianGrid stroke="#2a3042" strokeDasharray="3 6" vertical={false} />
+                <XAxis dataKey="day" stroke="#8b93a7" tickLine={false} axisLine={false} />
+                <YAxis
+                  stroke="#8b93a7"
+                  tickLine={false}
+                  axisLine={false}
+                  width={56}
+                  tickFormatter={(v) => `${Math.round(Number(v) / 100)}`}
+                />
+                <Tooltip
+                  contentStyle={{
+                    background: '#171a24',
+                    border: '1px solid #2a3042',
+                    borderRadius: 12,
+                  }}
+                  formatter={(value) => rub(Number(value ?? 0))}
+                  labelStyle={{ color: '#8b93a7' }}
+                />
+                <Area
+                  type="monotone"
+                  dataKey="amount"
+                  stroke="#9ec5ff"
+                  strokeWidth={3}
+                  fill="url(#spendFill)"
+                  dot={{ r: 4, fill: '#fff', stroke: '#9ec5ff', strokeWidth: 2 }}
+                  activeDot={{ r: 6 }}
+                />
+              </AreaChart>
+            </ResponsiveContainer>
+          </div>
+        </div>
+
+        <div className="card">
+          <h3>По категориям</h3>
+          {donut.length === 0 ? (
+            <p className="muted">Пока нет расходов за период</p>
+          ) : (
+            <>
+              <div className="donut-wrap">
+                <ResponsiveContainer width="100%" height="100%">
+                  <PieChart>
+                    <Pie
+                      data={donut}
+                      dataKey="value"
+                      nameKey="name"
+                      innerRadius={48}
+                      outerRadius={72}
+                      paddingAngle={3}
+                    >
+                      {donut.map((d) => (
+                        <Cell key={d.name} fill={d.color} stroke="transparent" />
+                      ))}
+                    </Pie>
+                    <Tooltip
+                      contentStyle={{
+                        background: '#171a24',
+                        border: '1px solid #2a3042',
+                        borderRadius: 12,
+                      }}
+                      formatter={(value) => rub(Number(value ?? 0))}
+                    />
+                  </PieChart>
+                </ResponsiveContainer>
+              </div>
+              <ul className="legend">
+                {donut.map((d) => (
+                  <li key={d.name}>
+                    <span className="legend-left">
+                      <span className="dot" style={{ background: d.color }} />
+                      {d.name}
+                    </span>
+                    <strong>{rub(d.value)}</strong>
+                  </li>
+                ))}
+              </ul>
+            </>
+          )}
+        </div>
+
+        <div className="card span-right">
+          <div className="card-head">
+            <h3>Ближайшие платежи</h3>
+            <div className="month-select">
+              <IconCalendar />
+              {new Date().toLocaleString('ru-RU', { month: 'long' })}
+            </div>
+          </div>
+          {upcoming.length === 0 ? (
+            <p className="muted">Добавьте регулярные траты во вкладке «Бюджет»</p>
+          ) : (
+            <ul className="bills">
+              {upcoming.map((b) => (
+                <li key={`${b.name}-${b.date}`} className="bill">
+                  <div>
+                    <strong>{b.name}</strong>
+                    <span className="muted small">{b.date}</span>
+                  </div>
+                  <strong>{rub(b.amount)}</strong>
+                </li>
+              ))}
+            </ul>
+          )}
+          <button className="linkish" onClick={onSeeAll}>
+            Смотреть все
+          </button>
+        </div>
+      </section>
+    </>
+  )
+}
+
+function Kpi({
+  label,
+  value,
+  tone,
+}: {
+  label: string
+  value: string
+  tone: 'up' | 'down' | 'plus'
 }) {
   return (
-    <section className="grid">
-      <div className="card highlight">
-        <div className="label">Капитал</div>
-        <div className="value">{rub(analytics.total_balance)}</div>
+    <div className="kpi">
+      <div className="kpi-top">
+        <span className="kpi-label">{label}</span>
+        <span className={`kpi-icon ${tone}`}>
+          {tone === 'up' ? '↗' : tone === 'down' ? '↘' : '+'}
+        </span>
       </div>
-      <div className="card">
-        <div className="label">Доходы за месяц</div>
-        <div className="value good">{rub(analytics.income_period)}</div>
-      </div>
-      <div className="card">
-        <div className="label">Расходы за месяц</div>
-        <div className="value bad">{rub(analytics.expense_period)}</div>
-      </div>
-      <div className="card">
-        <div className="label">Чистый поток</div>
-        <div className={`value ${analytics.net_period >= 0 ? 'good' : 'bad'}`}>
-          {rub(analytics.net_period)}
-        </div>
-      </div>
-
-      <div className="card wide">
-        <h3>Прогноз остатка</h3>
-        <div className="forecast-row">
-          {forecast?.points.map((p) => (
-            <div key={p.months_ahead} className="forecast-item">
-              <div className="label">через {p.months_ahead} мес.</div>
-              <div className="value">{rub(p.balance)}</div>
-              <div className="muted small">
-                +{rub(p.income)} / −{rub(p.expense)}
-              </div>
-            </div>
-          ))}
-        </div>
-      </div>
-
-      <div className="card">
-        <h3>Счета</h3>
-        <ul className="list">
-          {analytics.accounts.map((a) => (
-            <li key={a.id}>
-              <span>
-                {a.name}{' '}
-                <span className="muted">({accountTypeLabel[a.type]})</span>
-              </span>
-              <strong>{rub(a.balance)}</strong>
-            </li>
-          ))}
-        </ul>
-      </div>
-
-      <div className="card">
-        <h3>Расходы по категориям</h3>
-        {expenseCategories.length === 0 && <p className="muted">Пока нет расходов</p>}
-        <ul className="list">
-          {expenseCategories.map(([cat, sum]) => (
-            <li key={cat}>
-              <span>{cat}</span>
-              <strong>{rub(sum)}</strong>
-            </li>
-          ))}
-        </ul>
-      </div>
-
-      <div className="card wide">
-        <h3>Последние операции</h3>
-        <table>
-          <thead>
-            <tr>
-              <th>Дата</th>
-              <th>Тип</th>
-              <th>Описание</th>
-              <th>Категория</th>
-              <th>Сумма</th>
-            </tr>
-          </thead>
-          <tbody>
-            {txs.map((t) => (
-              <tr key={t.id}>
-                <td>{new Date(t.occurred_at).toLocaleDateString('ru-RU')}</td>
-                <td>
-                  <span className={`pill ${t.type}`}>
-                    {t.type === 'income' ? 'доход' : t.type === 'expense' ? 'расход' : 'перевод'}
-                  </span>
-                </td>
-                <td>{t.description || '—'}</td>
-                <td>{t.category}</td>
-                <td className={t.type === 'income' ? 'good' : t.type === 'expense' ? 'bad' : ''}>
-                  {t.type === 'expense' ? '−' : t.type === 'income' ? '+' : ''}
-                  {rub(t.amount)}
-                </td>
-              </tr>
-            ))}
-          </tbody>
-        </table>
-      </div>
-    </section>
+      <div className="kpi-value">{value}</div>
+    </div>
   )
 }
 
@@ -283,20 +404,20 @@ function AccountsPanel({
   }
 
   return (
-    <section className="grid">
-      <div className="card wide">
-        <h3>Капитал по счетам</h3>
-        <ul className="list big">
+    <section className="page-grid">
+      <div className="card">
+        <h3>Мои счета</h3>
+        <ul className="list">
           {accounts.map((a) => (
             <li key={a.id}>
               <div>
                 <strong>{a.name}</strong>
-                <div className="muted">
+                <div className="muted small">
                   {accountTypeLabel[a.type]}
                   {a.bank_name ? ` · ${a.bank_name}` : ''}
                 </div>
               </div>
-              <div className="value">{rub(a.balance)}</div>
+              <strong>{rub(a.balance)}</strong>
             </li>
           ))}
         </ul>
@@ -378,21 +499,16 @@ function ImportPanel({
   }
 
   return (
-    <section className="grid">
+    <section className="page-grid">
       <div className="card">
         <h3>Загрузить выписку</h3>
         <p className="muted">
-          CSV/XLSX из банков РФ. Тинькофф определяется автоматически. Переводы между своими
-          счетами не считаются расходами.
+          CSV/XLSX банков РФ. Переводы между своими счетами не считаются расходами.
         </p>
         <form className="form" onSubmit={submit}>
           <label>
-            Счёт списания/зачисления
-            <select
-              value={accountId}
-              onChange={(e) => setAccountId(Number(e.target.value))}
-              required
-            >
+            Счёт
+            <select value={accountId} onChange={(e) => setAccountId(Number(e.target.value))} required>
               {accounts.map((a) => (
                 <option key={a.id} value={a.id}>
                   {a.name}
@@ -495,15 +611,15 @@ function BudgetPanel({
   }
 
   return (
-    <section className="grid">
-      <div className="card wide">
+    <section className="page-grid">
+      <div className="card">
         <h3>Бюджет</h3>
         <ul className="list">
           {items.map((b) => (
             <li key={b.id}>
               <div>
                 <strong>{b.name}</strong>
-                <div className="muted">
+                <div className="muted small">
                   {budgetKindLabel[b.kind]}
                   {b.day_of_month ? ` · день ${b.day_of_month}` : ''}
                   {b.due_date ? ` · до ${b.due_date.slice(0, 10)}` : ''}
@@ -511,10 +627,7 @@ function BudgetPanel({
               </div>
               <div className="row-actions">
                 <strong>{rub(b.amount)}</strong>
-                <button
-                  className="btn ghost small"
-                  onClick={() => void api.deleteBudget(b.id).then(onChanged)}
-                >
+                <button className="btn ghost small" onClick={() => void api.deleteBudget(b.id).then(onChanged)}>
                   ✕
                 </button>
               </div>
@@ -579,8 +692,8 @@ function GoalsPanel({ goals, onChanged }: { goals: Goal[]; onChanged: () => Prom
   }
 
   return (
-    <section className="grid">
-      <div className="card wide">
+    <section className="page-grid">
+      <div className="card">
         <h3>Финансовые цели</h3>
         {goals.length === 0 && <p className="muted">Целей пока нет</p>}
         <div className="goals">
@@ -592,10 +705,7 @@ function GoalsPanel({ goals, onChanged }: { goals: Goal[]; onChanged: () => Prom
               <div key={g.id} className="goal">
                 <div className="row-actions">
                   <strong>{g.name}</strong>
-                  <button
-                    className="btn ghost small"
-                    onClick={() => void api.deleteGoal(g.id).then(onChanged)}
-                  >
+                  <button className="btn ghost small" onClick={() => void api.deleteGoal(g.id).then(onChanged)}>
                     ✕
                   </button>
                 </div>
@@ -653,7 +763,7 @@ function ScenariosPanel() {
   }
 
   return (
-    <section className="grid">
+    <section className="page-grid">
       <div className="card">
         <h3>А что, если…</h3>
         <p className="muted">Сравним прогноз с покупкой и без неё.</p>
@@ -671,7 +781,7 @@ function ScenariosPanel() {
         </form>
       </div>
       {result && (
-        <div className="card wide">
+        <div className="card">
           <h3>
             Сценарий: {result.name} (−{rub(result.amount)})
           </h3>
@@ -680,13 +790,14 @@ function ScenariosPanel() {
               const withP = result.with_purchase.points[idx]
               return (
                 <div key={p.months_ahead} className="forecast-item">
-                  <div className="label">через {p.months_ahead} мес.</div>
+                  <div className="muted small">через {p.months_ahead} мес.</div>
                   <div className="muted small">без покупки</div>
-                  <div className="value">{rub(p.balance)}</div>
+                  <div className="kpi-value" style={{ fontSize: '1.1rem' }}>
+                    {rubShort(p.balance)}
+                  </div>
                   <div className="muted small">с покупкой</div>
-                  <div className="value bad">{rub(withP.balance)}</div>
-                  <div className="muted small">
-                    дельта {rub(result.delta_by_horizon[`${p.months_ahead}m`] || 0)}
+                  <div className="kpi-value bad" style={{ fontSize: '1.1rem' }}>
+                    {rubShort(withP.balance)}
                   </div>
                 </div>
               )
@@ -695,5 +806,228 @@ function ScenariosPanel() {
         </div>
       )}
     </section>
+  )
+}
+
+function ManualModal({
+  accounts,
+  onClose,
+  onSaved,
+}: {
+  accounts: Account[]
+  onClose: () => void
+  onSaved: () => Promise<void>
+}) {
+  const [accountId, setAccountId] = useState(accounts[0]?.id ?? 0)
+  const [type, setType] = useState<'expense' | 'income' | 'transfer'>('expense')
+  const [amount, setAmount] = useState('')
+  const [description, setDescription] = useState('')
+  const [category, setCategory] = useState('Другое')
+  const [transferId, setTransferId] = useState(accounts[1]?.id ?? 0)
+  const [busy, setBusy] = useState(false)
+  const [err, setErr] = useState<string | null>(null)
+
+  async function submit(e: FormEvent) {
+    e.preventDefault()
+    if (!accountId) return
+    setBusy(true)
+    setErr(null)
+    try {
+      await api.createTransaction({
+        account_id: accountId,
+        type,
+        amount: Math.round(parseFloat(amount.replace(',', '.')) * 100),
+        description,
+        category: type === 'transfer' ? 'Перевод себе' : category,
+        transfer_account_id: type === 'transfer' ? transferId || undefined : undefined,
+      })
+      await onSaved()
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : 'ошибка')
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  return (
+    <div className="modal-backdrop" onClick={onClose}>
+      <div className="modal" onClick={(e) => e.stopPropagation()}>
+        <h3>Добавить вручную</h3>
+        <form className="form" onSubmit={submit}>
+          <label>
+            Тип
+            <select value={type} onChange={(e) => setType(e.target.value as typeof type)}>
+              <option value="expense">Расход</option>
+              <option value="income">Доход</option>
+              <option value="transfer">Перевод</option>
+            </select>
+          </label>
+          <label>
+            Счёт
+            <select value={accountId} onChange={(e) => setAccountId(Number(e.target.value))}>
+              {accounts.map((a) => (
+                <option key={a.id} value={a.id}>
+                  {a.name}
+                </option>
+              ))}
+            </select>
+          </label>
+          {type === 'transfer' && (
+            <label>
+              Куда
+              <select value={transferId} onChange={(e) => setTransferId(Number(e.target.value))}>
+                {accounts.map((a) => (
+                  <option key={a.id} value={a.id}>
+                    {a.name}
+                  </option>
+                ))}
+              </select>
+            </label>
+          )}
+          <label>
+            Сумма, ₽
+            <input value={amount} onChange={(e) => setAmount(e.target.value)} required />
+          </label>
+          <label>
+            Описание
+            <input value={description} onChange={(e) => setDescription(e.target.value)} />
+          </label>
+          {type !== 'transfer' && (
+            <label>
+              Категория
+              <input value={category} onChange={(e) => setCategory(e.target.value)} />
+            </label>
+          )}
+          {err && <div className="banner error">{err}</div>}
+          <div className="modal-actions">
+            <button type="button" className="btn ghost" onClick={onClose}>
+              Отмена
+            </button>
+            <button className="btn" disabled={busy}>
+              Сохранить
+            </button>
+          </div>
+        </form>
+      </div>
+    </div>
+  )
+}
+
+function buildWeeklySeries(txs: Transaction[]) {
+  const days = ['Пн', 'Вт', 'Ср', 'Чт', 'Пт', 'Сб', 'Вс']
+  const today = new Date()
+  const start = new Date(today)
+  start.setHours(0, 0, 0, 0)
+  start.setDate(today.getDate() - ((today.getDay() + 6) % 7)) // Monday
+
+  const amounts = Array.from({ length: 7 }, () => 0)
+  for (const t of txs) {
+    if (t.type !== 'expense') continue
+    const d = new Date(t.occurred_at)
+    const diff = Math.floor((d.getTime() - start.getTime()) / 86400000)
+    if (diff >= 0 && diff < 7) amounts[diff] += t.amount
+  }
+  return days.map((day, i) => ({ day, amount: amounts[i] }))
+}
+
+function buildUpcomingBills(items: BudgetItem[]) {
+  const now = new Date()
+  const out: { name: string; date: string; amount: number }[] = []
+  for (const b of items) {
+    if (!b.is_active) continue
+    if (b.kind === 'recurring_expense') {
+      const day = b.day_of_month ?? 1
+      const due = new Date(now.getFullYear(), now.getMonth(), day)
+      if (due < now) due.setMonth(due.getMonth() + 1)
+      out.push({
+        name: b.name,
+        date: due.toLocaleDateString('ru-RU', { day: '2-digit', month: '2-digit' }),
+        amount: b.amount,
+      })
+    }
+    if (b.kind === 'large_purchase' && b.due_date) {
+      out.push({
+        name: b.name,
+        date: b.due_date.slice(0, 10).split('-').reverse().slice(0, 2).join('-'),
+        amount: b.amount,
+      })
+    }
+  }
+  return out.slice(0, 6)
+}
+
+function IconGrid() {
+  return (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8">
+      <rect x="3" y="3" width="7" height="7" rx="1.5" />
+      <rect x="14" y="3" width="7" height="7" rx="1.5" />
+      <rect x="3" y="14" width="7" height="7" rx="1.5" />
+      <rect x="14" y="14" width="7" height="7" rx="1.5" />
+    </svg>
+  )
+}
+function IconCards() {
+  return (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8">
+      <rect x="2" y="5" width="20" height="14" rx="2" />
+      <path d="M2 10h20" />
+    </svg>
+  )
+}
+function IconUpload() {
+  return (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8">
+      <path d="M12 16V4" />
+      <path d="M7 9l5-5 5 5" />
+      <path d="M4 20h16" />
+    </svg>
+  )
+}
+function IconBills() {
+  return (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8">
+      <path d="M7 3h10v18l-2-1-2 1-2-1-2 1-2-1-2 1V3z" />
+      <path d="M9 8h6M9 12h6M9 16h4" />
+    </svg>
+  )
+}
+function IconTarget() {
+  return (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8">
+      <circle cx="12" cy="12" r="8" />
+      <circle cx="12" cy="12" r="4" />
+      <circle cx="12" cy="12" r="1" />
+    </svg>
+  )
+}
+function IconSpark() {
+  return (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8">
+      <path d="M12 3v4M12 17v4M3 12h4M17 12h4M6 6l2.5 2.5M15.5 15.5L18 18M18 6l-2.5 2.5M6 18l2.5-2.5" />
+    </svg>
+  )
+}
+function IconRefresh() {
+  return (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8">
+      <path d="M20 12a8 8 0 1 1-2.3-5.7" />
+      <path d="M20 4v5h-5" />
+    </svg>
+  )
+}
+function IconBell() {
+  return (
+    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8">
+      <path d="M6 9a6 6 0 1 1 12 0c0 7 3 7 3 7H3s3 0 3-7" />
+      <path d="M10 19a2 2 0 0 0 4 0" />
+    </svg>
+  )
+}
+function IconCalendar() {
+  return (
+    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8">
+      <rect x="3" y="5" width="18" height="16" rx="2" />
+      <path d="M3 10h18M8 3v4M16 3v4" />
+    </svg>
   )
 }
