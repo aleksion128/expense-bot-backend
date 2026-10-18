@@ -1,0 +1,28 @@
+.git
+.gitignore
+.env
+.idea
+.vscode
+
+**/node_modules
+**/dist
+**/.vite
+**/coverage
+**/*.test
+**/bin
+
+frontend/node_modules
+frontend/dist
+frontend/.vite
+
+# local binaries / OS junk
+*.exe
+*.dll
+.DS_Store
+Thumbs.db
+
+# docs / samples not needed in image build context for speed
+docs
+sample_data
+README.md
+Makefile

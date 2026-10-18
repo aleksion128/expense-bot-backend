@@ -3,7 +3,9 @@ FROM node:22-alpine AS web
 WORKDIR /web
 COPY frontend/package.json frontend/package-lock.json ./
 RUN npm ci
-COPY frontend/ ./
+COPY frontend/index.html frontend/vite.config.ts frontend/tsconfig.json frontend/tsconfig.app.json frontend/tsconfig.node.json ./
+COPY frontend/public ./public
+COPY frontend/src ./src
 RUN npm run build
 
 # Build API
