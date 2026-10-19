@@ -532,6 +532,7 @@ function ImportPanel({
             <select value={bank} onChange={(e) => setBank(e.target.value)}>
               <option value="auto">Авто</option>
               <option value="tinkoff">Тинькофф / T-Bank</option>
+              <option value="alfa">Альфа-Банк</option>
               <option value="sber">Сбер</option>
               <option value="generic">Универсальный CSV</option>
             </select>

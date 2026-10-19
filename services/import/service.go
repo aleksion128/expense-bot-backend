@@ -91,6 +91,13 @@ func Import(db *sql.DB, req ImportRequest) (models.ImportBatch, error) {
 		}
 
 		cat := categorize.Categorize(row.Description, txType, cats)
+		if row.Category != "" && (cat == "Другое" || cat == "Прочий доход") {
+			cat = row.Category
+		}
+		desc := row.Description
+		if desc == "" {
+			desc = row.Category
+		}
 		ext := row.ExternalID
 		t := models.Transaction{
 			UserID:            req.UserID,
@@ -98,7 +105,7 @@ func Import(db *sql.DB, req ImportRequest) (models.ImportBatch, error) {
 			TransferAccountID: transferTo,
 			Type:              txType,
 			Amount:            amount,
-			Description:       row.Description,
+			Description:       desc,
 			Category:          cat,
 			OccurredAt:        row.OccurredAt,
 			ExternalID:        &ext,
