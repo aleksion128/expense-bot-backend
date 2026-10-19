@@ -1,0 +1,23 @@
+# /etc/nginx/sites-available/budgetly.formula-ai.online
+# После копирования:
+#   sudo ln -s /etc/nginx/sites-available/budgetly.formula-ai.online /etc/nginx/sites-enabled/
+#   sudo nginx -t && sudo systemctl reload nginx
+#   sudo certbot --nginx -d budgetly.formula-ai.online
+
+server {
+    listen 80;
+    listen [::]:80;
+    server_name budgetly.formula-ai.online;
+
+    client_max_body_size 20m;
+
+    location / {
+        proxy_pass http://127.0.0.1:8443;
+        proxy_http_version 1.1;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_read_timeout 60s;
+    }
+}

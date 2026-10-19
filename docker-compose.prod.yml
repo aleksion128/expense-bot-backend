@@ -1,0 +1,42 @@
+# Production stack for budgetly.formula-ai.online
+# Usage on server:
+#   docker compose -f docker-compose.prod.yml up -d --build
+services:
+  db:
+    image: postgres:16-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: finance
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-change-me-strong}
+      POSTGRES_DB: finance
+    volumes:
+      - budgetly_pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U finance -d finance"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    # DB only inside docker network — not published to host
+
+  api:
+    build: .
+    restart: unless-stopped
+    environment:
+      POSTGRES_HOST: db
+      POSTGRES_PORT: "5432"
+      POSTGRES_USER: finance
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-change-me-strong}
+      POSTGRES_DB: finance
+      ADDR: ":8443"
+      MIGRATIONS_DIR: /app/migrations
+      STATIC_DIR: /app/frontend/dist
+      GIN_MODE: release
+    ports:
+      # only localhost — nginx on the same host proxies here
+      - "127.0.0.1:8443:8443"
+    depends_on:
+      db:
+        condition: service_healthy
+
+volumes:
+  budgetly_pgdata:
