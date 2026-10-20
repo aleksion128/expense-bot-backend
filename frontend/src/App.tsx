@@ -723,7 +723,7 @@ function AccountEditor({
       {err && <div className="banner error">{err}</div>}
       <div className="row-actions">
         <button className="btn small" disabled={busy || !dirty || !name.trim()}>
-          {busy ? 'Сохраняем…' : 'Сохранить баланс'}
+          {busy ? 'Сохраняем…' : 'Сохранить'}
         </button>
         {saved && !dirty && <span className="muted small">Сохранено</span>}
       </div>
