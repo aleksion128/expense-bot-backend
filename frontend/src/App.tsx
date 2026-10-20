@@ -1,9 +1,10 @@
-import { useCallback, useEffect, useMemo, useState, type FormEvent, type ReactNode } from 'react'
+import { useCallback, useEffect, useMemo, useRef, useState, type FormEvent, type ReactNode } from 'react'
 import {
   Area,
   AreaChart,
   CartesianGrid,
   Cell,
+  Legend,
   Pie,
   PieChart,
   ResponsiveContainer,
@@ -24,6 +25,24 @@ import {
   type ScenarioResult,
   type Transaction,
 } from './api'
+import {
+  buildSeries,
+  categoryTotals,
+  CHART_MODES,
+  chartTitle,
+  formatAxisMoney,
+  isoDate,
+  latestAnchor,
+  loadChartPrefs,
+  parseISODate,
+  periodBounds,
+  periodLabel,
+  periodSums,
+  saveChartPrefs,
+  shiftAnchor,
+  type ChartMode,
+  type ChartPrefs,
+} from './charts'
 import './App.css'
 
 type Tab = 'dashboard' | 'accounts' | 'import' | 'budget' | 'goals' | 'scenarios'
@@ -62,19 +81,24 @@ export default function App() {
   const [forecast, setForecast] = useState<Forecast | null>(null)
   const [accounts, setAccounts] = useState<Account[]>([])
   const [txs, setTxs] = useState<Transaction[]>([])
+  const [txTruncated, setTxTruncated] = useState(false)
   const [budget, setBudget] = useState<BudgetItem[]>([])
   const [goals, setGoals] = useState<Goal[]>([])
   const [imports, setImports] = useState<ImportBatch[]>([])
+  const [chartPrefs, setChartPrefs] = useState<ChartPrefs>(() => loadChartPrefs().prefs)
+  const [chartReady, setChartReady] = useState(() => loadChartPrefs().existed)
+  const allowAutoAnchor = useRef(!loadChartPrefs().existed)
+  const txsRef = useRef<Transaction[]>([])
 
   const reload = useCallback(async () => {
     setError(null)
     setLoading(true)
     try {
-      const [a, f, acc, t, b, g, i] = await Promise.all([
+      const [a, f, acc, txPage, b, g, i] = await Promise.all([
         api.analytics(),
         api.forecast(),
         api.accounts(),
-        api.transactions(300),
+        api.transactionsAll(),
         api.budget(),
         api.goals(),
         api.imports(),
@@ -82,12 +106,22 @@ export default function App() {
       setAnalytics(a)
       setForecast(f)
       setAccounts(acc)
-      setTxs(t)
+      setTxs(txPage.items)
+      txsRef.current = txPage.items
+      setTxTruncated(txPage.truncated)
       setBudget(b)
       setGoals(g)
       setImports(i)
+      if (allowAutoAnchor.current) {
+        allowAutoAnchor.current = false
+        const anchor = latestAnchor(txPage.items)
+        if (anchor) setChartPrefs((prev) => ({ ...prev, anchor }))
+      }
+      setChartReady(true)
+      return txPage.items
     } catch (e) {
       setError(e instanceof Error ? e.message : 'Ошибка загрузки')
+      return txsRef.current
     } finally {
       setLoading(false)
     }
@@ -97,14 +131,39 @@ export default function App() {
     void reload()
   }, [reload])
 
-  const expenseCategories = useMemo(() => {
-    if (!analytics) return []
-    return Object.entries(analytics.by_category_expense).sort((a, b) => b[1] - a[1])
-  }, [analytics])
+  useEffect(() => {
+    if (!chartReady) return
+    saveChartPrefs(chartPrefs)
+  }, [chartPrefs, chartReady])
 
-  const weekly = useMemo(() => buildWeeklySeries(txs), [txs])
+  const updateChartPrefs = useCallback((next: ChartPrefs) => {
+    allowAutoAnchor.current = false
+    setChartReady(true)
+    setChartPrefs(next)
+  }, [])
+
+  const reloadAndFocusNew = useCallback(async () => {
+    const prevIds = new Set(txsRef.current.map((t) => t.id))
+    const next = await reload()
+    const fresh = next.filter((t) => !prevIds.has(t.id))
+    const anchor = latestAnchor(fresh)
+    if (!anchor) return
+    allowAutoAnchor.current = false
+    setChartReady(true)
+    setChartPrefs((prev) => ({ ...prev, anchor }))
+  }, [reload])
+
   const upcoming = useMemo(() => buildUpcomingBills(budget), [budget])
   const estimated = forecast?.points.find((p) => p.months_ahead === 1)?.balance ?? analytics?.total_balance ?? 0
+  const chartAnchor = useMemo(() => parseISODate(chartPrefs.anchor), [chartPrefs.anchor])
+  const selectedPeriod = useMemo(
+    () => periodSums(txs, chartPrefs.mode, chartAnchor),
+    [txs, chartPrefs.mode, chartAnchor],
+  )
+  const selectedPeriodLabel = useMemo(
+    () => periodLabel(chartPrefs.mode, chartAnchor),
+    [chartPrefs.mode, chartAnchor],
+  )
 
   return (
     <div className="app-shell">
@@ -143,7 +202,7 @@ export default function App() {
                 {loading
                   ? 'Обновляем данные…'
                   : analytics
-                    ? `Капитал ${rubShort(analytics.total_balance)} · чистый поток ${rubShort(analytics.net_period)}`
+                    ? `Капитал ${rubShort(analytics.total_balance)} · ${selectedPeriodLabel}: ${rubShort(selectedPeriod.net)}`
                     : 'Загрузите выписку, чтобы увидеть аналитику'}
               </p>
             </div>
@@ -164,14 +223,16 @@ export default function App() {
           <DashboardView
             analytics={analytics}
             estimated={estimated}
-            weekly={weekly}
-            expenseCategories={expenseCategories}
+            txs={txs}
+            truncated={txTruncated}
+            prefs={chartPrefs}
+            onPrefs={updateChartPrefs}
             upcoming={upcoming}
             onSeeAll={() => setTab('budget')}
           />
         )}
         {tab === 'accounts' && <AccountsPanel accounts={accounts} onChanged={reload} />}
-        {tab === 'import' && <ImportPanel accounts={accounts} imports={imports} onChanged={reload} />}
+        {tab === 'import' && <ImportPanel accounts={accounts} imports={imports} onChanged={reloadAndFocusNew} />}
         {tab === 'budget' && <BudgetPanel items={budget} onChanged={reload} />}
         {tab === 'goals' && <GoalsPanel goals={goals} onChanged={reload} />}
         {tab === 'scenarios' && <ScenariosPanel />}
@@ -183,7 +244,8 @@ export default function App() {
           onClose={() => setManualOpen(false)}
           onSaved={async () => {
             setManualOpen(false)
-            await reload()
+            setTab('dashboard')
+            await reloadAndFocusNew()
           }}
         />
       )}
@@ -194,79 +256,185 @@ export default function App() {
 function DashboardView({
   analytics,
   estimated,
-  weekly,
-  expenseCategories,
+  txs,
+  truncated,
+  prefs,
+  onPrefs,
   upcoming,
   onSeeAll,
 }: {
   analytics: Analytics
   estimated: number
-  weekly: { day: string; amount: number }[]
-  expenseCategories: [string, number][]
+  txs: Transaction[]
+  truncated: boolean
+  prefs: ChartPrefs
+  onPrefs: (next: ChartPrefs) => void
   upcoming: { name: string; date: string; amount: number }[]
   onSeeAll: () => void
 }) {
-  const donut = expenseCategories.slice(0, 6).map(([name, value], i) => ({
+  const anchor = useMemo(() => parseISODate(prefs.anchor), [prefs.anchor])
+  const series = useMemo(() => buildSeries(txs, prefs.mode, anchor), [txs, prefs.mode, anchor])
+  const sums = useMemo(() => periodSums(txs, prefs.mode, anchor), [txs, prefs.mode, anchor])
+  const label = periodLabel(prefs.mode, anchor)
+  const categories = useMemo(() => categoryTotals(txs, prefs.mode, anchor), [txs, prefs.mode, anchor])
+  const topCategories = categories.slice(0, 5)
+  const rest = categories.slice(5).reduce((sum, [, value]) => sum + value, 0)
+  const donutSource = rest > 0 ? [...topCategories, ['Остальное', rest] as [string, number]] : topCategories
+  const donut = donutSource.map(([name, value], i) => ({
     name,
     value,
     color: CATEGORY_COLORS[i % CATEGORY_COLORS.length],
   }))
+  const empty = sums.income === 0 && sums.expense === 0
+  const latest = latestAnchor(txs)
+  const bounds = periodBounds(prefs.mode, anchor)
+  const latestDate = latest ? parseISODate(latest) : null
+  const latestOutside = latestDate != null && (latestDate < bounds.from || latestDate >= bounds.to)
+
+  function setMode(mode: ChartMode) {
+    onPrefs({ ...prefs, mode })
+  }
+
+  function move(dir: -1 | 1) {
+    onPrefs({ ...prefs, anchor: isoDate(shiftAnchor(prefs.mode, anchor, dir)) })
+  }
 
   return (
     <>
       <section className="kpi-row">
-        <Kpi label="Доходы" value={rub(analytics.income_period)} tone="up" />
-        <Kpi label="Расходы" value={rub(analytics.expense_period)} tone="down" />
-        <Kpi label="Баланс" value={rub(analytics.total_balance)} tone="plus" />
-        <Kpi label="Прогноз на месяц" value={rub(estimated)} tone="plus" />
+        <Kpi label="Доходы" hint={label} value={rub(sums.income)} tone="up" />
+        <Kpi label="Расходы" hint={label} value={rub(sums.expense)} tone="down" />
+        <Kpi label="Капитал" hint="все счета" value={rub(analytics.total_balance)} tone="plus" />
+        <Kpi label="Прогноз на месяц" hint="с учётом бюджета" value={rub(estimated)} tone="plus" />
       </section>
 
       <section className="dash-grid">
         <div className="card">
-          <h3>Обзор за неделю</h3>
-          <div className="chart-wrap">
-            <ResponsiveContainer width="100%" height="100%">
-              <AreaChart data={weekly} margin={{ top: 10, right: 8, left: 0, bottom: 0 }}>
-                <defs>
-                  <linearGradient id="spendFill" x1="0" y1="0" x2="0" y2="1">
-                    <stop offset="0%" stopColor="#7eb6ff" stopOpacity={0.35} />
-                    <stop offset="100%" stopColor="#7eb6ff" stopOpacity={0} />
-                  </linearGradient>
-                </defs>
-                <CartesianGrid stroke="#2a3042" strokeDasharray="3 6" vertical={false} />
-                <XAxis dataKey="day" stroke="#8b93a7" tickLine={false} axisLine={false} />
-                <YAxis
-                  stroke="#8b93a7"
-                  tickLine={false}
-                  axisLine={false}
-                  width={56}
-                  tickFormatter={(v) => `${Math.round(Number(v) / 100)}`}
-                />
-                <Tooltip
-                  contentStyle={{
-                    background: '#171a24',
-                    border: '1px solid #2a3042',
-                    borderRadius: 12,
-                  }}
-                  formatter={(value) => rub(Number(value ?? 0))}
-                  labelStyle={{ color: '#8b93a7' }}
-                />
-                <Area
-                  type="monotone"
-                  dataKey="amount"
-                  stroke="#9ec5ff"
-                  strokeWidth={3}
-                  fill="url(#spendFill)"
-                  dot={{ r: 4, fill: '#fff', stroke: '#9ec5ff', strokeWidth: 2 }}
-                  activeDot={{ r: 6 }}
-                />
-              </AreaChart>
-            </ResponsiveContainer>
+          <div className="card-head chart-head">
+            <div>
+              <h3>{chartTitle(prefs.mode)}</h3>
+              <p className="muted small">{label}</p>
+            </div>
+            <div className="chart-tools">
+              <div className="seg" role="tablist" aria-label="Период графика">
+                {CHART_MODES.map((mode) => (
+                  <button
+                    key={mode.id}
+                    type="button"
+                    role="tab"
+                    aria-selected={prefs.mode === mode.id}
+                    className={prefs.mode === mode.id ? 'active' : undefined}
+                    onClick={() => setMode(mode.id)}
+                  >
+                    {mode.label}
+                  </button>
+                ))}
+              </div>
+              <div className="chart-nav">
+                <button type="button" onClick={() => move(-1)} aria-label="Предыдущий период">
+                  ‹
+                </button>
+                <button type="button" onClick={() => move(1)} aria-label="Следующий период">
+                  ›
+                </button>
+              </div>
+            </div>
           </div>
+          <div className="chart-box">
+            <div className="chart-wrap">
+              <ResponsiveContainer width="100%" height="100%">
+                <AreaChart data={series} margin={{ top: 10, right: 8, left: 0, bottom: 0 }}>
+                  <defs>
+                    <linearGradient id="spendFill" x1="0" y1="0" x2="0" y2="1">
+                      <stop offset="0%" stopColor="#7eb6ff" stopOpacity={0.35} />
+                      <stop offset="100%" stopColor="#7eb6ff" stopOpacity={0} />
+                    </linearGradient>
+                    <linearGradient id="incomeFill" x1="0" y1="0" x2="0" y2="1">
+                      <stop offset="0%" stopColor="#3dd68c" stopOpacity={0.28} />
+                      <stop offset="100%" stopColor="#3dd68c" stopOpacity={0} />
+                    </linearGradient>
+                  </defs>
+                  <CartesianGrid stroke="#2a3042" strokeDasharray="3 6" vertical={false} />
+                  <XAxis
+                    dataKey="label"
+                    stroke="#8b93a7"
+                    tickLine={false}
+                    axisLine={false}
+                    interval={prefs.mode === 'month' ? 2 : 0}
+                    tick={{ fontSize: 12 }}
+                  />
+                  <YAxis
+                    stroke="#8b93a7"
+                    tickLine={false}
+                    axisLine={false}
+                    width={64}
+                    tickFormatter={(v) => formatAxisMoney(Number(v))}
+                  />
+                  <Tooltip
+                    contentStyle={{
+                      background: '#171a24',
+                      border: '1px solid #2a3042',
+                      borderRadius: 12,
+                    }}
+                    formatter={(value, name) => [rub(Number(value ?? 0)), name]}
+                    labelStyle={{ color: '#8b93a7' }}
+                  />
+                  <Legend wrapperStyle={{ color: '#8b93a7' }} />
+                  <Area
+                    type="monotone"
+                    dataKey="income"
+                    name="Доходы"
+                    stroke="#3dd68c"
+                    strokeWidth={2}
+                    fill="url(#incomeFill)"
+                    dot={false}
+                  />
+                  <Area
+                    type="monotone"
+                    dataKey="expense"
+                    name="Расходы"
+                    stroke="#9ec5ff"
+                    strokeWidth={3}
+                    fill="url(#spendFill)"
+                    dot={prefs.mode === 'week' ? { r: 4, fill: '#fff', stroke: '#9ec5ff', strokeWidth: 2 } : false}
+                    activeDot={{ r: 6 }}
+                  />
+                </AreaChart>
+              </ResponsiveContainer>
+            </div>
+            {empty && (
+              <div className="chart-empty">
+                <span>В этом периоде нет доходов и расходов</span>
+                {latest && latestOutside && (
+                  <button type="button" className="btn small" onClick={() => onPrefs({ ...prefs, anchor: latest })}>
+                    Показать последние операции
+                  </button>
+                )}
+              </div>
+            )}
+          </div>
+          <div className="chart-summary">
+            <span>
+              Расходы <strong>{rub(sums.expense)}</strong>
+            </span>
+            <span>
+              Доходы <strong>{rub(sums.income)}</strong>
+            </span>
+            <span>
+              Итого <strong>{rub(sums.net)}</strong>
+            </span>
+          </div>
+          <p className="muted small chart-note">
+            Переводы между своими счетами не входят в график.
+            {truncated ? ' Показаны последние 20 000 операций.' : ''}
+          </p>
         </div>
 
         <div className="card">
-          <h3>По категориям</h3>
+          <div className="card-head">
+            <h3>По категориям</h3>
+          </div>
+          <p className="muted small chart-note">{label}</p>
           {donut.length === 0 ? (
             <p className="muted">Пока нет расходов за период</p>
           ) : (
@@ -346,10 +514,12 @@ function DashboardView({
 
 function Kpi({
   label,
+  hint,
   value,
   tone,
 }: {
   label: string
+  hint?: string
   value: string
   tone: 'up' | 'down' | 'plus'
 }) {
@@ -362,6 +532,7 @@ function Kpi({
         </span>
       </div>
       <div className="kpi-value">{value}</div>
+      {hint && <div className="kpi-hint">{hint}</div>}
     </div>
   )
 }
@@ -371,7 +542,7 @@ function AccountsPanel({
   onChanged,
 }: {
   accounts: Account[]
-  onChanged: () => Promise<void>
+  onChanged: () => Promise<unknown>
 }) {
   const [name, setName] = useState('')
   const [type, setType] = useState<Account['type']>('card')
@@ -463,7 +634,7 @@ function ImportPanel({
 }: {
   accounts: Account[]
   imports: ImportBatch[]
-  onChanged: () => Promise<void>
+  onChanged: () => Promise<unknown>
 }) {
   const [accountId, setAccountId] = useState(accounts[0]?.id ?? 0)
   const [transferId, setTransferId] = useState(accounts[1]?.id ?? 0)
@@ -487,7 +658,8 @@ function ImportPanel({
     try {
       const batch = await api.importFile(file, accountId, bank, transferId || undefined)
       setMsg(
-        `Импортировано ${batch.rows_imported} из ${batch.rows_total} (пропущено ${batch.rows_skipped}), банк: ${batch.bank}`,
+        `Импортировано ${batch.rows_imported} из ${batch.rows_total} (пропущено ${batch.rows_skipped}), банк: ${batch.bank}` +
+          (batch.rows_imported > 0 ? '. График переключён на период новых операций.' : ''),
       )
       setFile(null)
       await onChanged()
@@ -581,7 +753,7 @@ function BudgetPanel({
   onChanged,
 }: {
   items: BudgetItem[]
-  onChanged: () => Promise<void>
+  onChanged: () => Promise<unknown>
 }) {
   const [kind, setKind] = useState<BudgetItem['kind']>('planned_income')
   const [name, setName] = useState('')
@@ -674,7 +846,7 @@ function BudgetPanel({
   )
 }
 
-function GoalsPanel({ goals, onChanged }: { goals: Goal[]; onChanged: () => Promise<void> }) {
+function GoalsPanel({ goals, onChanged }: { goals: Goal[]; onChanged: () => Promise<unknown> }) {
   const [name, setName] = useState('')
   const [target, setTarget] = useState('')
   const [current, setCurrent] = useState('0')
@@ -912,23 +1084,6 @@ function ManualModal({
       </div>
     </div>
   )
-}
-
-function buildWeeklySeries(txs: Transaction[]) {
-  const days = ['Пн', 'Вт', 'Ср', 'Чт', 'Пт', 'Сб', 'Вс']
-  const today = new Date()
-  const start = new Date(today)
-  start.setHours(0, 0, 0, 0)
-  start.setDate(today.getDate() - ((today.getDay() + 6) % 7)) // Monday
-
-  const amounts = Array.from({ length: 7 }, () => 0)
-  for (const t of txs) {
-    if (t.type !== 'expense') continue
-    const d = new Date(t.occurred_at)
-    const diff = Math.floor((d.getTime() - start.getTime()) / 86400000)
-    if (diff >= 0 && diff < 7) amounts[diff] += t.amount
-  }
-  return days.map((day, i) => ({ day, amount: amounts[i] }))
 }
 
 function buildUpcomingBills(items: BudgetItem[]) {

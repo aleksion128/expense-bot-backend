@@ -44,8 +44,11 @@ func ListTransactions(db *sql.DB, userID int, f TxFilter) ([]models.Transaction,
 		n++
 	}
 	limit := f.Limit
-	if limit <= 0 || limit > 500 {
-		limit = 100
+	if limit <= 0 {
+		limit = 500
+	}
+	if limit > 20000 {
+		limit = 20000
 	}
 	offset := f.Offset
 	if offset < 0 {

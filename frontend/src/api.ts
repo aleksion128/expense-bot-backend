@@ -3,6 +3,7 @@ const API = '/api/v1'
 async function req<T>(path: string, init?: RequestInit): Promise<T> {
   const res = await fetch(`${API}${path}`, {
     ...init,
+    cache: 'no-store',
     headers: {
       ...(init?.body instanceof FormData ? {} : { 'Content-Type': 'application/json' }),
       'X-User-Id': '1',
@@ -97,7 +98,19 @@ export const api = {
     req<Account>('/accounts', { method: 'POST', body: JSON.stringify(body) }),
   updateAccount: (id: number, body: Partial<Account>) =>
     req<Account>(`/accounts/${id}`, { method: 'PUT', body: JSON.stringify(body) }),
-  transactions: (limit = 200) => req<Transaction[]>(`/transactions?limit=${limit}`),
+  transactions: (limit = 2000, offset = 0) =>
+    req<Transaction[]>(`/transactions?limit=${limit}&offset=${offset}`),
+  async transactionsAll() {
+    const page = 2000
+    const cap = 20000
+    const items: Transaction[] = []
+    for (let offset = 0; offset < cap; offset += page) {
+      const chunk = await req<Transaction[]>(`/transactions?limit=${page}&offset=${offset}`)
+      items.push(...chunk)
+      if (chunk.length < page) return { items, truncated: false }
+    }
+    return { items, truncated: true }
+  },
   createTransaction: (body: Partial<Transaction>) =>
     req<Transaction>('/transactions', { method: 'POST', body: JSON.stringify(body) }),
   budget: () => req<BudgetItem[]>('/budget'),
