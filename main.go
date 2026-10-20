@@ -41,6 +41,8 @@ func main() {
 
 		api.GET("/transactions", handlers.ListTransactions)
 		api.POST("/transactions", handlers.CreateTransaction)
+		api.POST("/transactions/delete", handlers.DeleteTransactionsBulk)
+		api.DELETE("/transactions/:id", handlers.DeleteTransaction)
 
 		api.POST("/import", handlers.ImportStatement)
 		api.GET("/imports", handlers.ListImports)

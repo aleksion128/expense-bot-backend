@@ -24,6 +24,7 @@ export type Account = {
   balance: number
   currency: string
   bank_name?: string
+  is_active?: boolean
 }
 
 export type Transaction = {
@@ -113,6 +114,13 @@ export const api = {
   },
   createTransaction: (body: Partial<Transaction>) =>
     req<Transaction>('/transactions', { method: 'POST', body: JSON.stringify(body) }),
+  deleteTransaction: (id: number) =>
+    req<{ ok: boolean; deleted: number }>(`/transactions/${id}`, { method: 'DELETE' }),
+  deleteTransactions: (ids: number[]) =>
+    req<{ ok: boolean; deleted: number }>('/transactions/delete', {
+      method: 'POST',
+      body: JSON.stringify({ ids }),
+    }),
   budget: () => req<BudgetItem[]>('/budget'),
   createBudget: (body: Partial<BudgetItem>) =>
     req<BudgetItem>('/budget', { method: 'POST', body: JSON.stringify(body) }),

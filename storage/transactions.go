@@ -3,6 +3,7 @@ package storage
 import (
 	"bot_api_microservice/models"
 	"database/sql"
+	"errors"
 	"fmt"
 	"strings"
 	"time"
@@ -94,6 +95,89 @@ func CreateTransaction(db *sql.DB, t models.Transaction) (models.Transaction, er
 		return t, err
 	}
 	return t, nil
+}
+
+func DeleteTransactions(db *sql.DB, userID int, ids []int) (int, error) {
+	unique := make([]int, 0, len(ids))
+	seen := map[int]struct{}{}
+	for _, id := range ids {
+		if id <= 0 {
+			continue
+		}
+		if _, ok := seen[id]; ok {
+			continue
+		}
+		seen[id] = struct{}{}
+		unique = append(unique, id)
+	}
+	if len(unique) == 0 {
+		return 0, nil
+	}
+	if len(unique) > 1000 {
+		return 0, fmt.Errorf("too many ids")
+	}
+
+	tx, err := db.Begin()
+	if err != nil {
+		return 0, err
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	deleted := 0
+	for _, id := range unique {
+		t, err := lockTransaction(tx, userID, id)
+		if errors.Is(err, sql.ErrNoRows) {
+			continue
+		}
+		if err != nil {
+			return 0, err
+		}
+		if err := revertBalance(tx, t); err != nil {
+			return 0, err
+		}
+		if _, err := tx.Exec(`DELETE FROM transactions WHERE id=$1 AND user_id=$2`, id, userID); err != nil {
+			return 0, err
+		}
+		deleted++
+	}
+	if err := tx.Commit(); err != nil {
+		return 0, err
+	}
+	return deleted, nil
+}
+
+func lockTransaction(tx *sql.Tx, userID, id int) (models.Transaction, error) {
+	var t models.Transaction
+	err := tx.QueryRow(`
+		SELECT id, user_id, account_id, transfer_account_id, type, amount, description, category,
+		       occurred_at, external_id, import_batch_id, created_at
+		FROM transactions WHERE id=$1 AND user_id=$2 FOR UPDATE`, id, userID).Scan(
+		&t.ID, &t.UserID, &t.AccountID, &t.TransferAccountID, &t.Type, &t.Amount,
+		&t.Description, &t.Category, &t.OccurredAt, &t.ExternalID, &t.ImportBatchID, &t.CreatedAt,
+	)
+	return t, err
+}
+
+func revertBalance(tx *sql.Tx, t models.Transaction) error {
+	switch t.Type {
+	case models.TxIncome:
+		_, err := tx.Exec(`UPDATE accounts SET balance = balance - $1 WHERE id=$2 AND user_id=$3`, t.Amount, t.AccountID, t.UserID)
+		return err
+	case models.TxExpense:
+		_, err := tx.Exec(`UPDATE accounts SET balance = balance + $1 WHERE id=$2 AND user_id=$3`, t.Amount, t.AccountID, t.UserID)
+		return err
+	case models.TxTransfer:
+		if t.TransferAccountID == nil {
+			return fmt.Errorf("transfer_account_id required")
+		}
+		if _, err := tx.Exec(`UPDATE accounts SET balance = balance + $1 WHERE id=$2 AND user_id=$3`, t.Amount, t.AccountID, t.UserID); err != nil {
+			return err
+		}
+		_, err := tx.Exec(`UPDATE accounts SET balance = balance - $1 WHERE id=$2 AND user_id=$3`, t.Amount, *t.TransferAccountID, t.UserID)
+		return err
+	default:
+		return fmt.Errorf("unknown tx type: %s", t.Type)
+	}
 }
 
 func applyBalance(tx *sql.Tx, t models.Transaction) error {

@@ -4,7 +4,6 @@ import {
   AreaChart,
   CartesianGrid,
   Cell,
-  Legend,
   Pie,
   PieChart,
   ResponsiveContainer,
@@ -45,7 +44,7 @@ import {
 } from './charts'
 import './App.css'
 
-type Tab = 'dashboard' | 'accounts' | 'import' | 'budget' | 'goals' | 'scenarios'
+type Tab = 'dashboard' | 'operations' | 'accounts' | 'import' | 'budget' | 'goals' | 'scenarios'
 
 const CATEGORY_COLORS = ['#7eb6ff', '#5b8cff', '#9f7aea', '#63e6be', '#74c0fc', '#a5b4fc', '#c4b5fd', '#94a3b8']
 
@@ -64,6 +63,7 @@ const budgetKindLabel: Record<BudgetItem['kind'], string> = {
 
 const nav: { id: Tab; label: string; icon: ReactNode }[] = [
   { id: 'dashboard', label: 'Дашборд', icon: <IconGrid /> },
+  { id: 'operations', label: 'Операции', icon: <IconList /> },
   { id: 'accounts', label: 'Счета', icon: <IconCards /> },
   { id: 'import', label: 'Импорт', icon: <IconUpload /> },
   { id: 'budget', label: 'Бюджет', icon: <IconBills /> },
@@ -229,7 +229,11 @@ export default function App() {
             onPrefs={updateChartPrefs}
             upcoming={upcoming}
             onSeeAll={() => setTab('budget')}
+            onOpenOps={() => setTab('operations')}
           />
+        )}
+        {tab === 'operations' && (
+          <OperationsPanel accounts={accounts} txs={txs} truncated={txTruncated} onChanged={reload} />
         )}
         {tab === 'accounts' && <AccountsPanel accounts={accounts} onChanged={reload} />}
         {tab === 'import' && <ImportPanel accounts={accounts} imports={imports} onChanged={reloadAndFocusNew} />}
@@ -262,6 +266,7 @@ function DashboardView({
   onPrefs,
   upcoming,
   onSeeAll,
+  onOpenOps,
 }: {
   analytics: Analytics
   estimated: number
@@ -271,6 +276,7 @@ function DashboardView({
   onPrefs: (next: ChartPrefs) => void
   upcoming: { name: string; date: string; amount: number }[]
   onSeeAll: () => void
+  onOpenOps: () => void
 }) {
   const anchor = useMemo(() => parseISODate(prefs.anchor), [prefs.anchor])
   const series = useMemo(() => buildSeries(txs, prefs.mode, anchor), [txs, prefs.mode, anchor])
@@ -309,35 +315,40 @@ function DashboardView({
       </section>
 
       <section className="dash-grid">
-        <div className="card">
-          <div className="card-head chart-head">
-            <div>
-              <h3>{chartTitle(prefs.mode)}</h3>
-              <p className="muted small">{label}</p>
-            </div>
-            <div className="chart-tools">
-              <div className="seg" role="tablist" aria-label="Период графика">
-                {CHART_MODES.map((mode) => (
-                  <button
-                    key={mode.id}
-                    type="button"
-                    role="tab"
-                    aria-selected={prefs.mode === mode.id}
-                    className={prefs.mode === mode.id ? 'active' : undefined}
-                    onClick={() => setMode(mode.id)}
-                  >
-                    {mode.label}
+        <div className="card chart-card">
+          <div className="chart-head">
+            <div className="chart-head-top">
+              <div>
+                <h3>{chartTitle(prefs.mode)}</h3>
+                <p className="muted small">{label}</p>
+              </div>
+              <div className="row-actions">
+                <div className="chart-nav">
+                  <button type="button" onClick={() => move(-1)} aria-label="Предыдущий период">
+                    ‹
                   </button>
-                ))}
-              </div>
-              <div className="chart-nav">
-                <button type="button" onClick={() => move(-1)} aria-label="Предыдущий период">
-                  ‹
-                </button>
-                <button type="button" onClick={() => move(1)} aria-label="Следующий период">
-                  ›
+                  <button type="button" onClick={() => move(1)} aria-label="Следующий период">
+                    ›
+                  </button>
+                </div>
+                <button type="button" className="btn ghost small" onClick={onOpenOps}>
+                  Все операции
                 </button>
               </div>
+            </div>
+            <div className="seg" role="tablist" aria-label="Период графика">
+              {CHART_MODES.map((mode) => (
+                <button
+                  key={mode.id}
+                  type="button"
+                  role="tab"
+                  aria-selected={prefs.mode === mode.id}
+                  className={prefs.mode === mode.id ? 'active' : undefined}
+                  onClick={() => setMode(mode.id)}
+                >
+                  {mode.label}
+                </button>
+              ))}
             </div>
           </div>
           <div className="chart-box">
@@ -379,7 +390,6 @@ function DashboardView({
                     formatter={(value, name) => [rub(Number(value ?? 0)), name]}
                     labelStyle={{ color: '#8b93a7' }}
                   />
-                  <Legend wrapperStyle={{ color: '#8b93a7' }} />
                   <Area
                     type="monotone"
                     dataKey="income"
@@ -415,9 +425,11 @@ function DashboardView({
           </div>
           <div className="chart-summary">
             <span>
+              <span className="dot" style={{ background: '#9ec5ff' }} />
               Расходы <strong>{rub(sums.expense)}</strong>
             </span>
             <span>
+              <span className="dot" style={{ background: '#3dd68c' }} />
               Доходы <strong>{rub(sums.income)}</strong>
             </span>
             <span>
@@ -480,7 +492,7 @@ function DashboardView({
           )}
         </div>
 
-        <div className="card span-right">
+        <div className="card">
           <div className="card-head">
             <h3>Ближайшие платежи</h3>
             <div className="month-select">
@@ -578,20 +590,15 @@ function AccountsPanel({
     <section className="page-grid">
       <div className="card">
         <h3>Мои счета</h3>
-        <ul className="list">
+        <p className="muted small">
+          Остаток карты, брокерского и остальных счетов можно задать вручную. Импорт меняет его только на сумму новых операций.
+        </p>
+        <div className="account-grid">
           {accounts.map((a) => (
-            <li key={a.id}>
-              <div>
-                <strong>{a.name}</strong>
-                <div className="muted small">
-                  {accountTypeLabel[a.type]}
-                  {a.bank_name ? ` · ${a.bank_name}` : ''}
-                </div>
-              </div>
-              <strong>{rub(a.balance)}</strong>
-            </li>
+            <AccountEditor key={a.id} account={a} onChanged={onChanged} />
           ))}
-        </ul>
+          {accounts.length === 0 && <p className="muted">Счетов пока нет</p>}
+        </div>
       </div>
       <div className="card">
         <h3>Добавить счёт</h3>
@@ -623,6 +630,335 @@ function AccountsPanel({
           </button>
         </form>
       </div>
+    </section>
+  )
+}
+
+function AccountEditor({
+  account,
+  onChanged,
+}: {
+  account: Account
+  onChanged: () => Promise<unknown>
+}) {
+  const [balance, setBalance] = useState(rublesInput(account.balance))
+  const [name, setName] = useState(account.name)
+  const [type, setType] = useState(account.type)
+  const [bank, setBank] = useState(account.bank_name ?? '')
+  const [busy, setBusy] = useState(false)
+  const [err, setErr] = useState<string | null>(null)
+  const [saved, setSaved] = useState(false)
+
+  const balanceKopecks = parseRubles(balance)
+  const dirty =
+    balanceKopecks !== account.balance ||
+    name.trim() !== account.name ||
+    type !== account.type ||
+    bank.trim() !== (account.bank_name ?? '')
+
+  async function save(e: FormEvent) {
+    e.preventDefault()
+    if (balanceKopecks == null) {
+      setErr('Введите сумму, например 15000 или 15000,50')
+      return
+    }
+    setBusy(true)
+    setErr(null)
+    setSaved(false)
+    try {
+      await api.updateAccount(account.id, {
+        name: name.trim(),
+        type,
+        balance: balanceKopecks,
+        currency: account.currency || 'RUB',
+        bank_name: bank.trim(),
+        is_active: true,
+      })
+      setSaved(true)
+      await onChanged()
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : 'не удалось сохранить')
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  return (
+    <form className="account-card" onSubmit={save}>
+      <div className="account-card-top">
+        <div>
+          <span className="pill">{accountTypeLabel[account.type]}</span>
+          <strong className="account-name">{account.name}</strong>
+        </div>
+        <div className="account-current">{rub(account.balance)}</div>
+      </div>
+      <div className="account-fields">
+        <label>
+          Название
+          <input value={name} onChange={(e) => { setName(e.target.value); setSaved(false) }} required />
+        </label>
+        <label>
+          Тип
+          <select value={type} onChange={(e) => { setType(e.target.value as Account['type']); setSaved(false) }}>
+            <option value="card">Карта</option>
+            <option value="savings">Накопительный</option>
+            <option value="brokerage">Брокерский</option>
+            <option value="cash">Наличные</option>
+          </select>
+        </label>
+        <label>
+          Баланс, ₽
+          <input
+            value={balance}
+            inputMode="decimal"
+            onChange={(e) => { setBalance(e.target.value); setSaved(false) }}
+            aria-label={`Баланс счёта ${account.name}`}
+          />
+        </label>
+        <label>
+          Банк
+          <input value={bank} onChange={(e) => { setBank(e.target.value); setSaved(false) }} />
+        </label>
+      </div>
+      {err && <div className="banner error">{err}</div>}
+      <div className="row-actions">
+        <button className="btn small" disabled={busy || !dirty || !name.trim()}>
+          {busy ? 'Сохраняем…' : 'Сохранить баланс'}
+        </button>
+        {saved && !dirty && <span className="muted small">Сохранено</span>}
+      </div>
+    </form>
+  )
+}
+
+const PAGE_SIZE = 40
+
+const txTypeLabel: Record<Transaction['type'], string> = {
+  income: 'Доход',
+  expense: 'Расход',
+  transfer: 'Перевод',
+}
+
+function OperationsPanel({
+  accounts,
+  txs,
+  truncated,
+  onChanged,
+}: {
+  accounts: Account[]
+  txs: Transaction[]
+  truncated: boolean
+  onChanged: () => Promise<unknown>
+}) {
+  const [query, setQuery] = useState('')
+  const [type, setType] = useState<'all' | Transaction['type']>('all')
+  const [accountId, setAccountId] = useState(0)
+  const [page, setPage] = useState(0)
+  const [selected, setSelected] = useState<Set<number>>(new Set())
+  const [pending, setPending] = useState<number[] | null>(null)
+  const [busy, setBusy] = useState(false)
+  const [err, setErr] = useState<string | null>(null)
+
+  const names = useMemo(() => {
+    const map = new Map<number, string>()
+    for (const a of accounts) map.set(a.id, a.name)
+    return map
+  }, [accounts])
+
+  const filtered = useMemo(() => {
+    const q = query.trim().toLowerCase()
+    return txs.filter((t) => {
+      if (type !== 'all' && t.type !== type) return false
+      if (accountId && t.account_id !== accountId && t.transfer_account_id !== accountId) return false
+      if (!q) return true
+      const blob = `${t.description} ${t.category} ${names.get(t.account_id) ?? ''}`.toLowerCase()
+      return blob.includes(q)
+    })
+  }, [txs, query, type, accountId, names])
+
+  const pages = Math.max(1, Math.ceil(filtered.length / PAGE_SIZE))
+  const safePage = Math.min(page, pages - 1)
+  const pageItems = filtered.slice(safePage * PAGE_SIZE, safePage * PAGE_SIZE + PAGE_SIZE)
+  const pageIds = pageItems.map((t) => t.id)
+  const allChecked = pageIds.length > 0 && pageIds.every((id) => selected.has(id))
+
+  function toggle(id: number) {
+    setSelected((prev) => {
+      const next = new Set(prev)
+      if (next.has(id)) next.delete(id)
+      else next.add(id)
+      return next
+    })
+  }
+
+  function togglePage() {
+    setSelected((prev) => {
+      const next = new Set(prev)
+      if (allChecked) pageIds.forEach((id) => next.delete(id))
+      else pageIds.forEach((id) => next.add(id))
+      return next
+    })
+  }
+
+  async function remove(ids: number[]) {
+    setBusy(true)
+    setErr(null)
+    try {
+      const res = await api.deleteTransactions(ids)
+      if (res.deleted === 0) throw new Error('Эти операции уже удалены')
+      setSelected((prev) => {
+        const next = new Set(prev)
+        ids.forEach((id) => next.delete(id))
+        return next
+      })
+      setPending(null)
+      await onChanged()
+    } catch (e) {
+      setErr(e instanceof Error ? e.message : 'не удалось удалить')
+    } finally {
+      setBusy(false)
+    }
+  }
+
+  return (
+    <section className="card ops-card">
+      <div className="card-head">
+        <div>
+          <h3>Все операции</h3>
+          <p className="muted small">
+            {filtered.length} из {txs.length}
+            {truncated ? ' · загружены последние 20 000' : ''}
+          </p>
+        </div>
+      </div>
+      <div className="ops-toolbar">
+        <input
+          value={query}
+          placeholder="Поиск по описанию или категории"
+          onChange={(e) => {
+            setQuery(e.target.value)
+            setPage(0)
+          }}
+        />
+        <select
+          value={accountId}
+          onChange={(e) => {
+            setAccountId(Number(e.target.value))
+            setPage(0)
+          }}
+        >
+          <option value={0}>Все счета</option>
+          {accounts.map((a) => (
+            <option key={a.id} value={a.id}>
+              {a.name}
+            </option>
+          ))}
+        </select>
+        <select
+          value={type}
+          onChange={(e) => {
+            setType(e.target.value as 'all' | Transaction['type'])
+            setPage(0)
+          }}
+        >
+          <option value="all">Все типы</option>
+          <option value="expense">Расходы</option>
+          <option value="income">Доходы</option>
+          <option value="transfer">Переводы</option>
+        </select>
+        <button
+          type="button"
+          className="btn small danger"
+          disabled={selected.size === 0 || busy}
+          onClick={() => setPending([...selected])}
+        >
+          Удалить выбранные{selected.size > 0 ? ` (${selected.size})` : ''}
+        </button>
+      </div>
+      {pending && (
+        <div className="confirm-bar">
+          <span>
+            Удалить {pending.length} {pending.length === 1 ? 'операцию' : 'операций'}? Баланс счетов будет пересчитан.
+          </span>
+          <div className="row-actions">
+            <button type="button" className="btn ghost small" disabled={busy} onClick={() => setPending(null)}>
+              Отмена
+            </button>
+            <button type="button" className="btn small danger" disabled={busy} onClick={() => void remove(pending)}>
+              {busy ? 'Удаляем…' : 'Удалить'}
+            </button>
+          </div>
+        </div>
+      )}
+      {err && <div className="banner error">{err}</div>}
+      {pageItems.length === 0 ? (
+        <p className="muted">Операций не найдено</p>
+      ) : (
+        <div className="ops-table-wrap">
+          <table className="ops-table">
+            <thead>
+              <tr>
+                <th>
+                  <input type="checkbox" checked={allChecked} onChange={togglePage} aria-label="Выбрать операции на странице" />
+                </th>
+                <th>Дата</th>
+                <th>Описание</th>
+                <th>Счёт</th>
+                <th>Категория</th>
+                <th className="num">Сумма</th>
+                <th />
+              </tr>
+            </thead>
+            <tbody>
+              {pageItems.map((t) => (
+                <tr key={t.id}>
+                  <td>
+                    <input
+                      type="checkbox"
+                      checked={selected.has(t.id)}
+                      onChange={() => toggle(t.id)}
+                      aria-label={`Выбрать ${t.description || txTypeLabel[t.type]}`}
+                    />
+                  </td>
+                  <td className="nowrap">{formatTxDate(t.occurred_at)}</td>
+                  <td>
+                    <div className="tx-title">{t.description || 'Без описания'}</div>
+                    <span className={`pill ${t.type}`}>{txTypeLabel[t.type]}</span>
+                  </td>
+                  <td>{names.get(t.account_id) ?? 'Счёт'}</td>
+                  <td className="muted">{t.category || '—'}</td>
+                  <td className={`num ${t.type === 'expense' ? 'bad' : t.type === 'income' ? 'good' : ''}`}>
+                    {signedAmount(t)}
+                  </td>
+                  <td>
+                    <button type="button" className="btn ghost small" disabled={busy} onClick={() => setPending([t.id])}>
+                      Удалить
+                    </button>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
+      )}
+      {filtered.length > PAGE_SIZE && (
+        <div className="pager">
+          <button type="button" className="btn ghost small" disabled={safePage === 0} onClick={() => setPage(safePage - 1)}>
+            Назад
+          </button>
+          <span>
+            {safePage + 1} / {pages}
+          </span>
+          <button
+            type="button"
+            className="btn ghost small"
+            disabled={safePage >= pages - 1}
+            onClick={() => setPage(safePage + 1)}
+          >
+            Дальше
+          </button>
+        </div>
+      )}
     </section>
   )
 }
@@ -1086,6 +1422,28 @@ function ManualModal({
   )
 }
 
+function rublesInput(kopecks: number): string {
+  return (kopecks / 100).toLocaleString('ru-RU', { minimumFractionDigits: 2, maximumFractionDigits: 2 })
+}
+
+function parseRubles(raw: string): number | null {
+  const cleaned = raw.replace(/\s/g, '').replace(',', '.')
+  if (!/^-?\d+(\.\d+)?$/.test(cleaned)) return null
+  const value = Number(cleaned)
+  if (!Number.isFinite(value)) return null
+  return Math.round(value * 100)
+}
+
+function formatTxDate(value: string): string {
+  return new Date(value).toLocaleDateString('ru-RU', { day: '2-digit', month: 'short', year: 'numeric' })
+}
+
+function signedAmount(t: Transaction): string {
+  if (t.type === 'expense') return `−${rub(t.amount)}`
+  if (t.type === 'income') return `+${rub(t.amount)}`
+  return rub(t.amount)
+}
+
 function buildUpcomingBills(items: BudgetItem[]) {
   const now = new Date()
   const out: { name: string; date: string; amount: number }[] = []
@@ -1112,6 +1470,14 @@ function buildUpcomingBills(items: BudgetItem[]) {
   return out.slice(0, 6)
 }
 
+function IconList() {
+  return (
+    <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8">
+      <path d="M8 6h13M8 12h13M8 18h13" />
+      <path d="M4 6h.01M4 12h.01M4 18h.01" />
+    </svg>
+  )
+}
 function IconGrid() {
   return (
     <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8">

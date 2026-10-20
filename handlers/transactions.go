@@ -81,3 +81,45 @@ func CreateTransaction(c *gin.Context) {
 	}
 	c.JSON(http.StatusCreated, created)
 }
+
+func DeleteTransaction(c *gin.Context) {
+	db := middlewares.GetDB(c)
+	uid := middlewares.GetUserID(c)
+	id, err := strconv.Atoi(c.Param("id"))
+	if err != nil || id <= 0 {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid id"})
+		return
+	}
+	n, err := storage.DeleteTransactions(db, uid, []int{id})
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	if n == 0 {
+		c.JSON(http.StatusNotFound, gin.H{"error": "операция не найдена"})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"ok": true, "deleted": n})
+}
+
+func DeleteTransactionsBulk(c *gin.Context) {
+	db := middlewares.GetDB(c)
+	uid := middlewares.GetUserID(c)
+	var body struct {
+		IDs []int `json:"ids"`
+	}
+	if err := c.ShouldBindJSON(&body); err != nil {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "invalid json"})
+		return
+	}
+	if len(body.IDs) == 0 {
+		c.JSON(http.StatusBadRequest, gin.H{"error": "ids required"})
+		return
+	}
+	n, err := storage.DeleteTransactions(db, uid, body.IDs)
+	if err != nil {
+		c.JSON(http.StatusInternalServerError, gin.H{"error": err.Error()})
+		return
+	}
+	c.JSON(http.StatusOK, gin.H{"ok": true, "deleted": n})
+}
